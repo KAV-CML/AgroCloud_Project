@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import requests
 import joblib
+import pickle
 import time
 import os
 import json
@@ -27,21 +28,41 @@ This terminal orchestrates live meteorological streams from the **Open-Meteo API
 @st.cache_resource
 def load_ml_artifacts():
     artifacts = {}
+    
+    # Define a helper to load files using joblib or pickle as a fallback
+    def load_file(filepath):
+        try:
+            return joblib.load(filepath)
+        except Exception:
+            with open(filepath, 'rb') as f:
+                return pickle.load(f)
+
+    # We load crucial dependencies first. If these fail, we crash with a clear error.
     try:
-        artifacts['scaler'] = joblib.load('scaler.pkl')
-        artifacts['encoder'] = joblib.load('label_encoder.pkl')
-        
+        if os.path.exists('scaler.pkl'):
+            artifacts['scaler'] = load_file('scaler.pkl')
+        else:
+            st.error("🚨 Critical Error: 'scaler.pkl' was not found in the directory!")
+            
+        if os.path.exists('label_encoder.pkl'):
+            artifacts['encoder'] = load_file('label_encoder.pkl')
+        else:
+            st.error("🚨 Critical Error: 'label_encoder.pkl' was not found in the directory!")
+            
         # Safe load each group member's specific serialized engine weights
         if os.path.exists('logistic_regression_model.pkl'):
-            artifacts['Logistic Regression (Aditi - M1)'] = joblib.load('logistic_regression_model.pkl')
+            artifacts['Logistic Regression (Aditi - M1)'] = load_file('logistic_regression_model.pkl')
         if os.path.exists('knn_model.pkl'):
-            artifacts['K-Nearest Neighbors (Kaustubh - M2)'] = joblib.load('knn_model.pkl')
+            artifacts['K-Nearest Neighbors (Kaustubh - M2)'] = load_file('knn_model.pkl')
         if os.path.exists('random_forest_model.pkl'):
-            artifacts['Random Forest (Abhiram - M3)'] = joblib.load('random_forest_model.pkl')
+            artifacts['Random Forest (Abhiram - M3)'] = load_file('random_forest_model.pkl')
         if os.path.exists('lightgbm_model.pkl'):
-            artifacts['LightGBM (Vedant - M4)'] = joblib.load('lightgbm_model.pkl')
+            artifacts['LightGBM (Vedant - M4)'] = load_file('lightgbm_model.pkl')
+            
     except Exception as e:
-        st.error(f"Error initializing system binaries: {e}")
+        st.error(f"💥 Binary deserialization failure: {str(e)}")
+        st.info("Check if your virtual environment's scikit-learn version matches the version used during training.")
+        
     return artifacts
 
 artifacts = load_ml_artifacts()
@@ -130,92 +151,99 @@ w_col3.metric("Live Soil Substrate Layer Temp", f"{weather_features['soil_temp']
 # -------------------------------------------------------------------------
 st.subheader("⚙️ High-Throughput Edge Multi-Model Inference Engine")
 
-# Build data observation matrix mirroring our features
-input_data = pd.DataFrame([{
-    'N': N, 'P': P, 'K': K,
-    'temperature': weather_features['temperature'],
-    'humidity': weather_features['humidity'],
-    'ph': ph,
-    'rainfall': rainfall
-}])
+# Build data observation matrix with features and structural column names
+# This silences the "X does not have valid feature names" scikit-learn warnings!
+feature_names = ['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall']
+input_data = pd.DataFrame([[
+    N, P, K,
+    weather_features['temperature'],
+    weather_features['humidity'],
+    ph,
+    rainfall
+]], columns=feature_names)
 
-# Process features through our original standard scaler model pipeline
-input_scaled = artifacts['scaler'].transform(input_data)
+# Ensure our dependencies were successfully loaded before predicting
+if 'scaler' in artifacts and 'encoder' in artifacts:
+    # Process features through our standard scaler model pipeline
+    input_scaled = artifacts['scaler'].transform(input_data)
 
-latency_logs = {}
-predictions = {}
+    latency_logs = {}
+    predictions = {}
 
-# Compute model outputs simultaneously to benchmark real-time trade-offs
-for name, model in artifacts.items():
-    if name in ['scaler', 'encoder']:
-        continue
+    # Compute model outputs simultaneously to benchmark real-time trade-offs
+    for name, model in artifacts.items():
+        if name in ['scaler', 'encoder']:
+            continue
+            
+        t_start = time.perf_counter()
+        encoded_pred = model.predict(input_scaled)
+        t_end = time.perf_counter()
         
-    t_start = time.perf_counter()
-    encoded_pred = model.predict(input_scaled)
-    t_end = time.perf_counter()
-    
-    # Calculate inference time in milliseconds
-    latency_ms = (t_end - t_start) * 1000
-    latency_logs[name] = latency_ms
-    
-    # Decode compound class output string back into discrete targets
-    decoded_string = artifacts['encoder'].inverse_transform(encoded_pred)[0]
-    crop, fertilizer = decoded_string.split(" || ")
-    predictions[name] = {"Crop": crop, "Fertilizer": fertilizer}
+        # Calculate inference time in milliseconds
+        latency_ms = (t_end - t_start) * 1000
+        latency_logs[name] = latency_ms
+        
+        # Decode compound class output string back into discrete targets
+        decoded_string = artifacts['encoder'].inverse_transform(encoded_pred)[0]
+        crop, fertilizer = decoded_string.split(" || ")
+        predictions[name] = {"Crop": crop, "Fertilizer": fertilizer}
 
-# Display individual outputs matching team report subsections
-if predictions:
-    pred_cols = st.columns(len(predictions))
-    for idx, (model_name, results) in enumerate(predictions.items()):
-        with pred_cols[idx]:
-            st.info(f"**{model_name}**")
-            st.metric("Recommended Crop", results["Crop"])
-            st.metric("Assigned Fertilizer", results["Fertilizer"])
-            
-            # Display the Model's Validation Accuracy
-            acc_val = accuracy_metrics.get(model_name, 0.0) * 100
-            st.metric("Test Accuracy Score", f"{acc_val:.2f}%")
-            
-            st.caption(f"Compute Latency: `{latency_logs[model_name]:.4f} ms`")
+    # Display individual outputs matching team report subsections
+    if predictions:
+        pred_cols = st.columns(len(predictions))
+        for idx, (model_name, results) in enumerate(predictions.items()):
+            with pred_cols[idx]:
+                st.info(f"**{model_name}**")
+                st.metric("Recommended Crop", results["Crop"])
+                st.metric("Assigned Fertilizer", results["Fertilizer"])
+                
+                # Display the Model's Validation Accuracy
+                acc_val = accuracy_metrics.get(model_name, 0.0) * 100
+                st.metric("Test Accuracy Score", f"{acc_val:.2f}%")
+                
+                st.caption(f"Compute Latency: `{latency_logs[model_name]:.4f} ms`")
+    else:
+        st.error("No team ML models could be located or verified in this environment.")
 else:
-    st.error("No team artifacts located. Please compile individual member scripts first.")
+    st.error("Unable to start inference pipeline. Please check the loading errors above for 'scaler.pkl' or 'label_encoder.pkl'.")
 
 # -------------------------------------------------------------------------
 # 5. ENTERPRISE VISUAL GRAPHICAL ANALYTICS
 # -------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("📊 Empirical Performance & Input Vector Diagnostics")
+if 'scaler' in artifacts and 'encoder' in artifacts and predictions:
+    st.markdown("---")
+    st.subheader("📊 Empirical Performance & Input Vector Diagnostics")
 
-# Clean short names extracted for clear X-axis label display formatting
-analytics_df = pd.DataFrame({
-    'Algorithm': [name.split(" (")[0] for name in latency_logs.keys()],
-    'Latency (ms)': list(latency_logs.values()),
-    'Accuracy (%)': [accuracy_metrics.get(name, 0.0) * 100 for name in latency_logs.keys()]
-})
+    # Clean short names extracted for clear X-axis label display formatting
+    analytics_df = pd.DataFrame({
+        'Algorithm': [name.split(" (")[0] for name in latency_logs.keys()],
+        'Latency (ms)': list(latency_logs.values()),
+        'Accuracy (%)': [accuracy_metrics.get(name, 0.0) * 100 for name in latency_logs.keys()]
+    })
 
-# Create clean dataset mapping active macro-nutrient properties
-soil_profile_df = pd.DataFrame({
-    'Nutrient Metric': ['Nitrogen (N)', 'Phosphorus (P)', 'Potassium (K)'],
-    'Value (mg/kg)': [N, P, K]
-})
+    # Create clean dataset mapping active macro-nutrient properties
+    soil_profile_df = pd.DataFrame({
+        'Nutrient Metric': ['Nitrogen (N)', 'Phosphorus (P)', 'Potassium (K)'],
+        'Value (mg/kg)': [N, P, K]
+    })
 
-# Structure layout across 3 balanced visual column segments
-g_col1, g_col2, g_col3 = st.columns([1.2, 1.2, 1])
+    # Structure layout across 3 balanced visual column segments
+    g_col1, g_col2, g_col3 = st.columns([1.2, 1.2, 1])
 
-with g_col1:
-    st.markdown("📈 **Algorithm Predictive Power Comparison**")
-    st.line_chart(data=analytics_df, x='Algorithm', y='Accuracy (%)', color="#2ca02c")
-    st.caption("Visual validation convergence boundaries (Higher is better).")
+    with g_col1:
+        st.markdown("📈 **Algorithm Predictive Power Comparison**")
+        st.line_chart(data=analytics_df, x='Algorithm', y='Accuracy (%)', color="#2ca02c")
+        st.caption("Visual validation convergence boundaries (Higher is better).")
 
-with g_col2:
-    st.markdown("⏱️ **Inference Compute Latency Benchmark**")
-    st.bar_chart(data=analytics_df, x='Algorithm', y='Latency (ms)', color="#1f77b4")
-    st.caption("Computation pipeline delay in milliseconds (Lower is better).")
+    with g_col2:
+        st.markdown("⏱️ **Inference Compute Latency Benchmark**")
+        st.bar_chart(data=analytics_df, x='Algorithm', y='Latency (ms)', color="#1f77b4")
+        st.caption("Computation pipeline delay in milliseconds (Lower is better).")
 
-with g_col3:
-    st.markdown("🧪 **Active Soil Macro-Nutrient Proportions**")
-    st.bar_chart(data=soil_profile_df, x='Nutrient Metric', y='Value (mg/kg)', color="#ff7f0e")
-    st.caption("Visual weight distribution of the active chemical vector inputs.")
+    with g_col3:
+        st.markdown("🧪 **Active Soil Macro-Nutrient Proportions**")
+        st.bar_chart(data=soil_profile_df, x='Nutrient Metric', y='Value (mg/kg)', color="#ff7f0e")
+        st.caption("Visual weight distribution of the active chemical vector inputs.")
 
 # Technical breakdown analysis matrix box
 st.markdown("### 📝 Architectural Performance Analysis Matrix")
