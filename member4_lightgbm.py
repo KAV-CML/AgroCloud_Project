@@ -1,8 +1,4 @@
-"""
-Cloud Machine Learning - Individual Assignment Pipeline
-Algorithm: LightGBM Classifier (Gradient Boosting Scalability Node)
-Author: Group Member 4
-"""
+
 import time
 import numpy as np
 import pandas as pd
@@ -17,7 +13,7 @@ def run_member4_pipeline():
     print(" [MEMBER 4] RUNNING LIGHTGBM GRADIENT BOOSTING PIPELINE")
     print("="*70)
 
-    # 1. Import Shared Data Node Splits
+    # Import shared data 
     try:
         X_train = pd.read_csv('X_train_scaled.csv')
         X_test = pd.read_csv('X_test_scaled.csv')
@@ -28,9 +24,8 @@ def run_member4_pipeline():
         print("[ERROR] Split matrices missing. Run 'prepare_data.py' first.")
         return
 
-    # 2. Model Initialization
-    # Configured with multi-class objective, leaf-wise tree building (num_leaves),
-    # and verbose=-1 to suppress non-essential log streams during performance evaluation.
+    #  Model initialization
+
     model = lgb.LGBMClassifier(
         objective='multiclass',
         num_class=len(np.unique(y_train)),
@@ -42,20 +37,17 @@ def run_member4_pipeline():
         verbose=-1
     )
 
-    # 3. Training Microsecond Profiling Telemetry
+
     print("\n[TELEMETRY] Initiating Model Training Execution Loop...")
     t_start_train = time.perf_counter()
     model.fit(X_train, y_train)
     t_end_train = time.perf_counter()
     training_latency = t_end_train - t_start_train
-
-    # 4. High-Throughput Inference Profiling Telemetry
     t_start_inf = time.perf_counter()
     y_pred = model.predict(X_test)
     t_end_inf = time.perf_counter()
     inference_latency = t_end_inf - t_start_inf
 
-    # 5. Advanced Cloud Metrics Extraction
     throughput = len(X_test) / inference_latency if inference_latency > 0 else 0
     accuracy = accuracy_score(y_test, y_pred)
 
@@ -68,15 +60,13 @@ def run_member4_pipeline():
     print(f"• Empirical Validation Accuracy: {accuracy * 100:.2f}%")
     print("#"*40)
 
-    # 6. Detailed Analytics for Technical Error Reports
     print("\n[METRIC REPORT] Compiling Class F1-Score Metrics Profiles...")
     print(classification_report(y_test, y_pred, target_names=encoder.classes_[:len(np.unique(y_test))]))
 
-    # 7. Serialize Weights for Central Dashboard Mounting
     joblib.dump(model, 'lightgbm_model.pkl')
     print("[SAVED] Exported 'lightgbm_model.pkl' successfully.")
 
-    # 8. Automated Academic Learning Curve Generation (Required by Project Brief)
+    #  Academic learning curve generation 
     print("\n[GRAPHICS] Constructing Validation Learning Curve Array...")
     train_sizes, train_scores, test_scores = learning_curve(
         model, X_train, y_train, cv=3, scoring='accuracy', 
